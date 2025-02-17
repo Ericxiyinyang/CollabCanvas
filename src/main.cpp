@@ -60,6 +60,7 @@ void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
   Serial.print("Bytes received: ");
   Serial.println(len);
   incomingText = incomingMessage.user_message;
+  Serial.println(incomingText);
 }
 
 String expose_mac_address() {
