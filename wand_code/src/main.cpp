@@ -6,7 +6,7 @@
  * Electronics 2025 Final Project
  */
 
-#include "HardwareSerial.h"
+#include "HWCDC.h"
 #include "esp32-hal.h"
 #include "esp_err.h"
 #include "lwip/ip_addr.h"
@@ -15,8 +15,11 @@
 #include <cstdint>
 #include <cstring>
 #include <esp_now.h>
+#include <iterator>
 
 using namespace std;
+
+HWCDC USBSerial;
 
 #define MESSAGE_BUFFER_SIZE 100
 
@@ -24,10 +27,10 @@ using namespace std;
 // Use hexidecimal system, i.e. 0xFF to encode letters A-F in MAC address.
 
 // FLASH THIS FOR WAND 1
-const uint8_t RECEIVER_MAC_ADD[] = {0x20, 0x43, 0xA8, 0x65, 0xEB, 0x68};
+// const uint8_t RECEIVER_MAC_ADD[] = {0x20, 0x43, 0xA8, 0x65, 0xEB, 0x68};
 
 // FLASH THIS FOR WAND 2
-// const uint8_t RECEIVER_MAC_ADD[] = {0x20, 0x43, 0xA8, 0x65, 0xC0, 0x7C};
+const uint8_t RECEIVER_MAC_ADD[] = {0x20, 0x43, 0xA8, 0x65, 0xC0, 0x7C};
 
 String success;
 
@@ -44,23 +47,24 @@ wand_message incomingMessage;
 esp_now_peer_info peerInfo;
 
 void onDataSent(const uint8_t *mac, esp_now_send_status_t status) {
-  Serial.print("\r\nLast Packet Send Status:\t");
+  USBSerial.print("\r\nLast Packet Send Status:\t");
   if (status == ESP_NOW_SEND_SUCCESS) {
-    Serial.println("Delivery Success");
+    USBSerial.println("Delivery Success");
     success = "Delivery Success :)";
   } else {
-    Serial.println("Delivery Fail");
+    USBSerial.println("Delivery Fail");
     success = "Delivery Fail :(";
   }
 }
 
-void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+void onDataRecv(const esp_now_recv_info *mac, const uint8_t *incomingData,
+                int len) {
   // Copy the incoming data into incomingMessage
   memcpy(&incomingMessage, incomingData, sizeof(incomingMessage));
-  Serial.print("Bytes received: ");
-  Serial.println(len);
+  USBSerial.print("Bytes received: ");
+  USBSerial.println(len);
   // Print the received message stored in the char array
-  Serial.println(incomingMessage.user_message);
+  USBSerial.println(incomingMessage.user_message);
 }
 
 String expose_mac_address() {
@@ -71,19 +75,19 @@ String expose_mac_address() {
 }
 
 String input_handler() {
-  if (Serial.available() > 0) {
-    String inputString = Serial.readStringUntil('\n');
+  if (USBSerial.available() > 0) {
+    String inputString = USBSerial.readStringUntil('\n');
     return inputString;
   }
   return "";
 }
 
 void setup() {
-  Serial.begin(115200);
+  USBSerial.begin(115200);
   WiFi.mode(WIFI_STA);
 
   if (esp_now_init() != ESP_OK) {
-    Serial.println("Error starting ESPNOW protocol!");
+    USBSerial.println("Error starting ESPNOW protocol!");
     return;
   }
 
@@ -96,7 +100,7 @@ void setup() {
 
   // Add the peer
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-    Serial.println("Peer add FAILED");
+    USBSerial.println("Peer add FAILED");
     return;
   }
 
@@ -114,9 +118,9 @@ void loop() {
     esp_err_t result = esp_now_send(RECEIVER_MAC_ADD, (uint8_t *)&myMessage,
                                     sizeof(myMessage));
     if (result == ESP_OK) {
-      Serial.println("Sent: " + input);
+      USBSerial.println("Sent: " + input);
     } else {
-      Serial.println("Failed to send...");
+      USBSerial.println("Failed to send...");
     }
   }
   delay(1000);
