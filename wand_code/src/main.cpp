@@ -19,6 +19,8 @@
 
 using namespace std;
 
+// NOTE: if using a board from China they might be doing HWCDC instead of
+// Serial
 HWCDC USBSerial;
 
 #define MESSAGE_BUFFER_SIZE 100
@@ -26,11 +28,12 @@ HWCDC USBSerial;
 // NOTE: define MAC address with an unsigned 8 integer array, thanks!
 // Use hexidecimal system, i.e. 0xFF to encode letters A-F in MAC address.
 
-// FLASH THIS FOR WAND 1
-// const uint8_t RECEIVER_MAC_ADD[] = {0x20, 0x43, 0xA8, 0x65, 0xEB, 0x68};
+// WAND V2 MAC
 
-// FLASH THIS FOR WAND 2
-const uint8_t RECEIVER_MAC_ADD[] = {0x20, 0x43, 0xA8, 0x65, 0xC0, 0x7C};
+// const uint8_t RECEIVER_MAC_ADD[] = {0xA0, 0x85, 0xE3, 0xF0, 0x91, 0x90};
+
+// WAND V1.69 MAC
+const uint8_t RECEIVER_MAC_ADD[] = {0xE8, 0x06, 0x90, 0x92, 0x95, 0x68};
 
 String success;
 
@@ -67,6 +70,7 @@ void onDataRecv(const esp_now_recv_info *mac, const uint8_t *incomingData,
   USBSerial.println(incomingMessage.user_message);
 }
 
+// use this everytime you get a new board...lol
 String expose_mac_address() {
   // Helper function to return ESP32's MAC address
   WiFi.mode(WIFI_STA);
@@ -95,7 +99,8 @@ void setup() {
 
   // Set up peer information for the receiver
   memcpy(peerInfo.peer_addr, RECEIVER_MAC_ADD, 6);
-  peerInfo.channel = 0;
+  uint8_t channel = WiFi.channel();
+  peerInfo.channel = channel;
   peerInfo.encrypt = false;
 
   // Add the peer
@@ -108,6 +113,7 @@ void setup() {
 }
 
 void loop() {
+  // USBSerial.println(expose_mac_address());
   String input = input_handler();
   if (input.length() > 0) {
     // Convert the input String to a C-style char array and copy it into our
@@ -123,5 +129,4 @@ void loop() {
       USBSerial.println("Failed to send...");
     }
   }
-  delay(1000);
 }
