@@ -134,8 +134,8 @@ void setup() {
   lv_obj_set_size(chart, 240, 280);
   lv_obj_align(chart, LV_ALIGN_CENTER, 0, 0);
   lv_chart_set_type(chart, LV_CHART_TYPE_LINE); /* Set the type to line */
-  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, -180,
-                     180);             /* Set the range of y axis */
+  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, -90,
+                     90);              /* Set the range of y axis */
   lv_chart_set_point_count(chart, 20); /* Set the number of data points */
   acc_series_x = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_RED),
                                      LV_CHART_AXIS_PRIMARY_Y);
