@@ -1,132 +1,206 @@
-/*
- * CollabCanvas code by Eric Yang and Jordan Gonzalez
- *
- * Credit to ESPNOW framework documentation for networking
- *
- * Electronics 2025 Final Project
- */
-
+#include "Arduino_GFX_Library.h"
 #include "HWCDC.h"
-#include "esp32-hal.h"
-#include "esp_err.h"
-#include "lwip/ip_addr.h"
-#include "pgmspace.h"
-#include <WiFi.h>
-#include <cstdint>
-#include <cstring>
-#include <esp_now.h>
-#include <iterator>
+#include "SensorQMI8658.hpp"
+#include "lv_conf.h"
+#include "pin_config.h"
+#include <Arduino.h>
+#include <Wire.h>
+#include <lvgl.h>
 
-using namespace std;
-
-// NOTE: if using a board from China they might be doing HWCDC instead of
-// Serial
 HWCDC USBSerial;
 
-#define MESSAGE_BUFFER_SIZE 100
+#define EXAMPLE_LVGL_TICK_PERIOD_MS 2
 
-// NOTE: define MAC address with an unsigned 8 integer array, thanks!
-// Use hexidecimal system, i.e. 0xFF to encode letters A-F in MAC address.
+static lv_disp_draw_buf_t draw_buf;
+static lv_color_t buf[LCD_WIDTH * LCD_HEIGHT / 10];
 
-// WAND V2 MAC
+SensorQMI8658 qmi;
 
-// const uint8_t RECEIVER_MAC_ADD[] = {0xA0, 0x85, 0xE3, 0xF0, 0x91, 0x90};
+IMUdata acc;
+IMUdata gyr;
 
-// WAND V1.69 MAC
-const uint8_t RECEIVER_MAC_ADD[] = {0xE8, 0x06, 0x90, 0x92, 0x95, 0x68};
+lv_obj_t *label;                 // Global label object
+lv_obj_t *chart;                 // Global chart object
+lv_chart_series_t *acc_series_x; // Acceleration X series
+lv_chart_series_t *acc_series_y; // Acceleration Y series
+lv_chart_series_t *acc_series_z; // Acceleration Z series
 
-String success;
+Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCK, LCD_MOSI);
 
-// TODO: implement actual wand_message structure later
-// need to send IMU data as floats
-typedef struct wand_message {
-  char user_message[MESSAGE_BUFFER_SIZE];
-} wand_message;
+Arduino_GFX *gfx =
+    new Arduino_ST7789(bus, LCD_RST /* RST */, 0 /* rotation */, true /* IPS */,
+                       LCD_WIDTH, LCD_HEIGHT, 0, 20, 0, 0);
 
-wand_message myMessage;
-wand_message incomingMessage;
+#if LV_USE_LOG != 0
+/* Serial debugging */
+void my_print(const char *buf) {
+  USBSerial.printf(buf);
+  USBSerial.flush();
+}
+#endif
 
-// ESP-NOW peer info for the receiver
-esp_now_peer_info peerInfo;
+/* Display flushing */
+void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area,
+                   lv_color_t *color_p) {
+  uint32_t w = (area->x2 - area->x1 + 1);
+  uint32_t h = (area->y2 - area->y1 + 1);
 
-void onDataSent(const uint8_t *mac, esp_now_send_status_t status) {
-  USBSerial.print("\r\nLast Packet Send Status:\t");
-  if (status == ESP_NOW_SEND_SUCCESS) {
-    USBSerial.println("Delivery Success");
-    success = "Delivery Success :)";
-  } else {
-    USBSerial.println("Delivery Fail");
-    success = "Delivery Fail :(";
+#if (LV_COLOR_16_SWAP != 0)
+  gfx->draw16bitBeRGBBitmap(area->x1, area->y1, (uint16_t *)&color_p->full, w,
+                            h);
+#else
+  gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)&color_p->full, w, h);
+#endif
+
+  lv_disp_flush_ready(disp);
+}
+
+void example_increase_lvgl_tick(void *arg) {
+  /* Tell LVGL how many milliseconds has elapsed */
+  lv_tick_inc(EXAMPLE_LVGL_TICK_PERIOD_MS);
+}
+
+static uint8_t count = 0;
+void example_increase_reboot(void *arg) {
+  count++;
+  if (count == 30) {
+    esp_restart();
   }
-}
-
-void onDataRecv(const esp_now_recv_info *mac, const uint8_t *incomingData,
-                int len) {
-  // Copy the incoming data into incomingMessage
-  memcpy(&incomingMessage, incomingData, sizeof(incomingMessage));
-  USBSerial.print("Bytes received: ");
-  USBSerial.println(len);
-  // Print the received message stored in the char array
-  USBSerial.println(incomingMessage.user_message);
-}
-
-// use this everytime you get a new board...lol
-String expose_mac_address() {
-  // Helper function to return ESP32's MAC address
-  WiFi.mode(WIFI_STA);
-  String macAddress = WiFi.macAddress();
-  return macAddress;
-}
-
-String input_handler() {
-  if (USBSerial.available() > 0) {
-    String inputString = USBSerial.readStringUntil('\n');
-    return inputString;
-  }
-  return "";
 }
 
 void setup() {
-  USBSerial.begin(115200);
-  WiFi.mode(WIFI_STA);
+  USBSerial.begin(115200); /* prepare for possible serial debug */
 
-  if (esp_now_init() != ESP_OK) {
-    USBSerial.println("Error starting ESPNOW protocol!");
-    return;
+  // pinMode(LCD_EN, OUTPUT);
+  // digitalWrite(LCD_EN, HIGH);
+
+  gfx->begin();
+  pinMode(LCD_BL, OUTPUT);
+  pinMode(38, OUTPUT);
+  digitalWrite(LCD_BL, HIGH);
+  digitalWrite(38, HIGH);
+  String LVGL_Arduino = "Hello Arduino! ";
+  LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() +
+                  "." + lv_version_patch();
+
+  USBSerial.println(LVGL_Arduino);
+  USBSerial.println("I am LVGL_Arduino");
+
+  lv_init();
+
+#if LV_USE_LOG != 0
+  lv_log_register_print_cb(
+      my_print); /* register print function for debugging */
+#endif
+
+  lv_disp_draw_buf_init(&draw_buf, buf, NULL, LCD_WIDTH * LCD_HEIGHT / 10);
+
+  /*Initialize the display*/
+  static lv_disp_drv_t disp_drv;
+  lv_disp_drv_init(&disp_drv);
+  /*Change the following line to your display resolution*/
+  disp_drv.hor_res = LCD_WIDTH;
+  disp_drv.ver_res = LCD_HEIGHT;
+  disp_drv.flush_cb = my_disp_flush;
+  disp_drv.draw_buf = &draw_buf;
+  lv_disp_drv_register(&disp_drv);
+
+  /*Initialize the (dummy) input device driver*/
+  static lv_indev_drv_t indev_drv;
+  lv_indev_drv_init(&indev_drv);
+  indev_drv.type = LV_INDEV_TYPE_POINTER;
+  lv_indev_drv_register(&indev_drv);
+
+  lv_obj_t *label = lv_label_create(lv_scr_act());
+  lv_label_set_text(label, "Hello Ardino and LVGL!");
+  lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+
+  const esp_timer_create_args_t lvgl_tick_timer_args = {
+      .callback = &example_increase_lvgl_tick, .name = "lvgl_tick"};
+
+  const esp_timer_create_args_t reboot_timer_args = {
+      .callback = &example_increase_reboot, .name = "reboot"};
+
+  esp_timer_handle_t lvgl_tick_timer = NULL;
+  esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer);
+  esp_timer_start_periodic(lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000);
+
+  label = lv_label_create(lv_scr_act());
+  lv_label_set_text(label, "Initializing...");
+  lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+
+  /* Create chart */
+  chart = lv_chart_create(lv_scr_act());
+  lv_obj_set_size(chart, 240, 280);
+  lv_obj_align(chart, LV_ALIGN_CENTER, 0, 0);
+  lv_chart_set_type(chart, LV_CHART_TYPE_LINE); /* Set the type to line */
+  lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, -180,
+                     180);             /* Set the range of y axis */
+  lv_chart_set_point_count(chart, 20); /* Set the number of data points */
+  acc_series_x = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_RED),
+                                     LV_CHART_AXIS_PRIMARY_Y);
+  acc_series_y = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_GREEN),
+                                     LV_CHART_AXIS_PRIMARY_Y);
+  acc_series_z = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_BLUE),
+                                     LV_CHART_AXIS_PRIMARY_Y);
+
+  USBSerial.println("Setup done");
+
+  if (!qmi.begin(Wire, QMI8658_L_SLAVE_ADDRESS, IIC_SDA, IIC_SCL)) {
+
+    while (1) {
+      delay(1000);
+    }
   }
 
-  esp_now_register_send_cb(onDataSent);
+  /* Get chip id */
+  USBSerial.println(qmi.getChipID());
 
-  // Set up peer information for the receiver
-  memcpy(peerInfo.peer_addr, RECEIVER_MAC_ADD, 6);
-  uint8_t channel = WiFi.channel();
-  peerInfo.channel = channel;
-  peerInfo.encrypt = false;
+  qmi.configAccelerometer(SensorQMI8658::ACC_RANGE_4G,
+                          SensorQMI8658::ACC_ODR_1000Hz,
+                          SensorQMI8658::LPF_MODE_0, true);
 
-  // Add the peer
-  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-    USBSerial.println("Peer add FAILED");
-    return;
-  }
+  qmi.configGyroscope(SensorQMI8658::GYR_RANGE_64DPS,
+                      SensorQMI8658::GYR_ODR_896_8Hz, SensorQMI8658::LPF_MODE_3,
+                      true);
 
-  esp_now_register_recv_cb(onDataRecv);
+  qmi.enableGyroscope();
+  qmi.enableAccelerometer();
+
+  qmi.dumpCtrlRegister();
+
+  USBSerial.println("Read data now...");
 }
 
 void loop() {
-  // USBSerial.println(expose_mac_address());
-  String input = input_handler();
-  if (input.length() > 0) {
-    // Convert the input String to a C-style char array and copy it into our
-    // message struct
-    input.toCharArray(myMessage.user_message, MESSAGE_BUFFER_SIZE);
+  lv_timer_handler(); /* let the GUI do its work */
+  delay(5);
 
-    // Send the message via ESP-NOW
-    esp_err_t result = esp_now_send(RECEIVER_MAC_ADD, (uint8_t *)&myMessage,
-                                    sizeof(myMessage));
-    if (result == ESP_OK) {
-      USBSerial.println("Sent: " + input);
-    } else {
-      USBSerial.println("Failed to send...");
+  if (qmi.getDataReady()) {
+    if (qmi.getAccelerometer(acc.x, acc.y, acc.z)) {
+      USBSerial.print("{ACCEL: ");
+      USBSerial.print(acc.x);
+      USBSerial.print(",");
+      USBSerial.print(acc.y);
+      USBSerial.print(",");
+      USBSerial.print(acc.z);
+      USBSerial.println("}");
+    }
+
+    if (qmi.getGyroscope(gyr.x, gyr.y, gyr.z)) {
+      USBSerial.print("{GYRO: ");
+      USBSerial.print(gyr.x);
+      USBSerial.print(",");
+      USBSerial.print(gyr.y);
+      USBSerial.print(",");
+      USBSerial.print(gyr.z);
+      USBSerial.println("}");
+
+      // Update chart with new accelerometer data
+      lv_chart_set_next_value(chart, acc_series_x, gyr.x);
+      lv_chart_set_next_value(chart, acc_series_y, gyr.y);
+      lv_chart_set_next_value(chart, acc_series_z, gyr.z);
     }
   }
+  delay(20); // Increase the frequency of data polling
 }
